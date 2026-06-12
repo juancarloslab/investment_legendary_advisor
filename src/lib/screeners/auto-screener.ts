@@ -34,7 +34,7 @@ const SCREENING_CACHE_KEY = 'screening:daily';
 const SCREENING_TTL = 4 * 60 * 60 * 1000; // 4시간
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300;
-const MAX_TICKERS = 50; // Vercel Hobby 10s 제한 대응: 상위 50종목만 스크리닝
+const MAX_TICKERS = 200; // 전체 유니버스 스크리닝 (로컬/장시간 런타임 기준). Vercel Hobby 10s 환경에서는 HARD_TIMEOUT_MS로 부분 결과 처리
 
 // 스크리닝 진행 상태 (인메모리)
 let screeningProgress = {
@@ -259,8 +259,9 @@ export async function runDailyScreening(forceRefresh: boolean = false): Promise<
       log.warn('시장 현황 수집 실패, VIX만 사용');
     }
 
-    // 3. 배치 처리 (8초 하드 타임아웃 — Vercel Hobby 10초 제한 대응)
-    const HARD_TIMEOUT_MS = 8000;
+    // 3. 배치 처리 (하드 타임아웃 — 초과 시 부분 결과로 진행)
+    // 로컬/장시간 런타임에서 전체 유니버스를 처리하도록 상향. Vercel Hobby(10s)에서는 8000 등으로 낮춰야 함
+    const HARD_TIMEOUT_MS = 120000;
     let timedOut = false;
 
     for (let i = 0; i < tickers.length; i += BATCH_SIZE) {

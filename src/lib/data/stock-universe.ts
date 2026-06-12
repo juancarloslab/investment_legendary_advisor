@@ -36,7 +36,7 @@ export const STOCK_UNIVERSE: Record<string, string[]> = {
   dividendAristocrats: [
     'JNJ', 'PG', 'KO', 'PEP', 'MCD', 'WMT', 'ABT', 'MMM', 'EMR', 'ITW',
     'CL', 'GPC', 'DOV', 'LOW', 'TGT', 'CAT', 'XOM', 'CVX', 'GD', 'BDX',
-    'APD', 'WBA', 'O', 'KMB', 'SWK', 'PPG', 'ADM', 'BEN', 'TROW', 'CINF',
+    'APD', 'O', 'KMB', 'SWK', 'PPG', 'ADM', 'BEN', 'TROW', 'CINF',
     'AOS', 'NUE', 'LEG', 'WST', 'PNR', 'CTAS', 'SBUX', 'ECL', 'HRL', 'MKC',
     'BF-B', 'ROP', 'MDT', 'AFL', 'EXPD', 'GRMN', 'IBM', 'SPGI', 'CLX', 'FRT'
   ],
@@ -44,7 +44,7 @@ export const STOCK_UNIVERSE: Record<string, string[]> = {
   // 혁신 성장주 (ARK 스타일)
   innovationGrowth: [
     'PLTR', 'SNOW', 'CRWD', 'NET', 'DDOG', 'ZS', 'MDB', 'ANET', 'SMCI', 'ENPH',
-    'RBLX', 'U', 'OKTA', 'SPLK', 'NOW', 'VEEV', 'TDOC', 'SHOP', 'SQ', 'ROKU',
+    'RBLX', 'U', 'OKTA', 'NOW', 'VEEV', 'TDOC', 'SHOP', 'XYZ', 'ROKU',
     'PTON', 'Z', 'OPEN', 'DNA', 'TWLO', 'FSLY', 'CFLT', 'S', 'MNDY', 'ASAN'
   ],
 
@@ -74,7 +74,7 @@ export const STOCK_UNIVERSE: Record<string, string[]> = {
   smallMidCap: [
     'VICI', 'STAG', 'EPR', 'OHI', 'MPW', 'NXRT', 'CUBE', 'EXR', 'PSA', 'LSI',
     'DY', 'MTZ', 'PRIM', 'EME', 'APG', 'GVA', 'ROAD', 'TTEK', 'TRC', 'FIX',
-    'SM', 'MRO', 'DVN', 'MUR', 'CNX', 'CRC', 'GPOR', 'RRC', 'SWN', 'CTRA'
+    'SM', 'DVN', 'MUR', 'CNX', 'CRC', 'GPOR', 'RRC', 'SWN', 'CTRA'
   ],
 };
 
@@ -92,12 +92,12 @@ export const ALL_TICKERS: string[] = [
   'VRTX', 'PANW', 'MU', 'LRCX', 'KLAC', 'REGN', 'SNPS', 'CDNS', 'ASML', 'NXPI',
   'CSX', 'FTNT', 'MRVL', 'FANG', 'DXCM', 'WDAY', 'ORLY', 'MAR', 'AEP',
   // Dividend Aristocrats additions
-  'APD', 'WBA', 'O', 'KMB', 'SWK', 'PPG', 'ADM', 'BEN', 'TROW', 'CINF',
+  'APD', 'O', 'KMB', 'SWK', 'PPG', 'ADM', 'BEN', 'TROW', 'CINF',
   'AOS', 'NUE', 'LEG', 'WST', 'PNR', 'CTAS', 'ECL', 'HRL', 'MKC', 'ROP',
   'MDT', 'AFL', 'EXPD', 'GRMN', 'SPGI', 'CLX', 'FRT',
   // Innovation Growth
   'PLTR', 'SNOW', 'CRWD', 'NET', 'DDOG', 'ZS', 'MDB', 'ANET', 'SMCI', 'ENPH',
-  'RBLX', 'U', 'OKTA', 'SPLK', 'NOW', 'VEEV', 'TDOC', 'SHOP', 'SQ', 'ROKU',
+  'RBLX', 'U', 'OKTA', 'NOW', 'VEEV', 'TDOC', 'SHOP', 'XYZ', 'ROKU',
   // Sector Leaders additions
   'BAC', 'MS', 'BLK', 'C', 'WFC', 'ABBV', 'PFE', 'MRK', 'TMO', 'DHR',
   'BMY', 'COP', 'EOG', 'SLB', 'OXY', 'MPC', 'VLO', 'PSX', 'KMI',
@@ -106,7 +106,13 @@ export const ALL_TICKERS: string[] = [
   // Korean Favorites ETF
   'SOXL', 'TQQQ', 'SCHD', 'VOO', 'QQQ', 'SPY',
   // Small-Mid Cap
-  'VICI', 'STAG', 'CUBE', 'EXR', 'PSA', 'DY', 'SM', 'MRO', 'DVN',
+  'VICI', 'STAG', 'CUBE', 'EXR', 'PSA', 'DY', 'SM', 'DVN',
+  // User-added US stocks (2026-06-11) — 미국 거래소 상장 개별주만
+  'BMNR', 'TEM', 'QBTS', 'OKLO', 'SMR', 'RXRX', 'HIMS', 'IREN', 'NVTS', 'CRWV',
+  'RKLB', 'CRCL', 'SOFI', 'JOBY', 'ORCL', 'ONDS', 'PBR', 'LMND', 'WDC', 'ASTS',
+  'NBIS', 'LPTH', 'ALMU', 'AEHR',
+  // User-added ETFs (2026-06-11)
+  'XOVR', 'VCX',
 ].filter((v, i, a) => a.indexOf(v) === i).sort();
 
 // ─── 종목명 매핑 ─────────────────────────────────────────────
@@ -164,9 +170,9 @@ export const STOCK_NAMES: Record<string, string> = {
   // 혁신 성장
   'PLTR': 'Palantir', 'SNOW': 'Snowflake', 'CRWD': 'CrowdStrike', 'NET': 'Cloudflare',
   'DDOG': 'Datadog', 'ZS': 'Zscaler', 'MDB': 'MongoDB', 'ENPH': 'Enphase Energy',
-  'RBLX': 'Roblox', 'U': 'Unity', 'OKTA': 'Okta', 'SPLK': 'Splunk',
+  'RBLX': 'Roblox', 'U': 'Unity', 'OKTA': 'Okta',
   'NOW': 'ServiceNow', 'VEEV': 'Veeva', 'TDOC': 'Teladoc', 'SHOP': 'Shopify',
-  'SQ': 'Block', 'ROKU': 'Roku', 'ZM': 'Zoom',
+  'XYZ': 'Block', 'ROKU': 'Roku', 'ZM': 'Zoom',
 
   // 미디어/통신
   'CMCSA': 'Comcast', 'CHTR': 'Charter Communications', 'FOX': 'Fox Corp',
@@ -188,14 +194,14 @@ export const STOCK_NAMES: Record<string, string> = {
   // 소형/중형주
   'VICI': 'VICI Properties', 'STAG': 'Stag Industrial', 'CUBE': 'CubeSmart',
   'EXR': 'Extra Space Storage', 'DY': 'Dycom', 'SM': 'SM Energy',
-  'MRO': 'Marathon Oil', 'DVN': 'Devon Energy',
+  'DVN': 'Devon Energy',
 
   // 다우존스 특수
   'DOW': 'Dow Inc', 'IBM': 'IBM', 'TRV': 'Travelers',
 
   // 그 외
   'ADI': 'Analog Devices', 'ADP': 'Automatic Data Processing',
-  'APD': 'Air Products', 'WBA': 'Walgreens', 'SWK': 'Stanley Black & Decker',
+  'APD': 'Air Products', 'SWK': 'Stanley Black & Decker',
   'PPG': 'PPG Industries', 'ADM': 'Archer-Daniels-Midland', 'BEN': 'Franklin Resources',
   'TROW': 'T. Rowe Price', 'CINF': 'Cincinnati Financial', 'AOS': 'A. O. Smith',
   'NUE': 'Nucor', 'LEG': 'Leggett & Platt', 'WST': 'West Pharmaceutical',
@@ -205,6 +211,19 @@ export const STOCK_NAMES: Record<string, string> = {
   'FANG': 'Diamondback Energy', 'DXCM': 'Dexcom', 'WDAY': 'Workday',
   'ORLY': "O'Reilly Automotive", 'MAR': 'Marriott',
   'CFLT': 'Confluent', 'S': 'SentinelOne', 'MNDY': 'Monday.com', 'ASAN': 'Asana',
+
+  // User-added US stocks (2026-06-11)
+  'BMNR': 'BitMine Immersion', 'TEM': 'Tempus AI', 'QBTS': 'D-Wave Quantum',
+  'OKLO': 'Oklo', 'SMR': 'NuScale Power', 'RXRX': 'Recursion Pharmaceuticals',
+  'HIMS': 'Hims & Hers Health', 'IREN': 'IREN', 'NVTS': 'Navitas Semiconductor',
+  'CRWV': 'CoreWeave', 'RKLB': 'Rocket Lab', 'CRCL': 'Circle Internet Group',
+  'SOFI': 'SoFi Technologies', 'JOBY': 'Joby Aviation', 'ORCL': 'Oracle',
+  'ONDS': 'Ondas Holdings', 'PBR': 'Petrobras', 'LMND': 'Lemonade',
+  'WDC': 'Western Digital', 'ASTS': 'AST SpaceMobile', 'NBIS': 'Nebius Group',
+  'LPTH': 'LightPath Technologies', 'ALMU': 'Aeluma', 'AEHR': 'Aehr Test Systems',
+
+  // User-added ETFs (2026-06-11)
+  'XOVR': 'XOVR (ERShares 혁신성장)', 'VCX': 'VCX (ETF)',
 };
 
 // ─── 섹터 매핑 ───────────────────────────────────────────────
@@ -220,7 +239,7 @@ export const SECTOR_MAP: Record<string, string> = {
   'LRCX': 'Technology', 'MU': 'Technology', 'ADI': 'Technology', 'IBM': 'Technology',
   'NOW': 'Technology', 'CRM': 'Technology', 'ADP': 'Technology', 'FIS': 'Technology',
   'FISV': 'Technology', 'SNOW': 'Technology', 'DDOG': 'Technology', 'NET': 'Technology',
-  'OKTA': 'Technology', 'SPLK': 'Technology', 'ZS': 'Technology', 'CRWD': 'Technology',
+  'OKTA': 'Technology', 'ZS': 'Technology', 'CRWD': 'Technology',
   'PLTR': 'Technology', 'MDB': 'Technology', 'U': 'Technology', 'RBLX': 'Technology',
   'ZM': 'Technology', 'TWLO': 'Technology', 'CFLT': 'Technology', 'S': 'Technology',
   'MNDY': 'Technology', 'ASAN': 'Technology', 'WDAY': 'Technology',
@@ -242,7 +261,7 @@ export const SECTOR_MAP: Record<string, string> = {
   'CCL': 'Consumer Discretionary', 'RCL': 'Consumer Discretionary',
   'NCLH': 'Consumer Discretionary', 'ABNB': 'Consumer Discretionary',
   'DASH': 'Consumer Discretionary', 'UBER': 'Consumer Discretionary',
-  'LYFT': 'Consumer Discretionary', 'SQ': 'Consumer Discretionary',
+  'LYFT': 'Consumer Discretionary', 'XYZ': 'Consumer Discretionary',
   'SHOP': 'Consumer Discretionary', 'ETSY': 'Consumer Discretionary',
   'ROKU': 'Consumer Discretionary', 'PTON': 'Consumer Discretionary',
   'Z': 'Consumer Discretionary', 'OPEN': 'Consumer Discretionary',
@@ -295,7 +314,7 @@ export const SECTOR_MAP: Record<string, string> = {
   'SLB': 'Energy', 'OXY': 'Energy', 'MPC': 'Energy', 'VLO': 'Energy',
   'PSX': 'Energy', 'KMI': 'Energy', 'WMB': 'Energy', 'OKE': 'Energy',
   'EPD': 'Energy', 'MPLX': 'Energy', 'ET': 'Energy', 'ENB': 'Energy',
-  'TRP': 'Energy', 'FANG': 'Energy', 'DVN': 'Energy', 'MRO': 'Energy',
+  'TRP': 'Energy', 'FANG': 'Energy', 'DVN': 'Energy',
   'SM': 'Energy', 'CTRA': 'Energy',
 
   // Communications (additional ones not in Technology)
@@ -326,6 +345,19 @@ export const SECTOR_MAP: Record<string, string> = {
   // ETF
   'SOXL': 'ETF', 'TQQQ': 'ETF', 'SCHD': 'ETF', 'VOO': 'ETF',
   'QQQ': 'ETF', 'SPY': 'ETF',
+
+  // User-added US stocks (2026-06-11)
+  'BMNR': 'Technology', 'TEM': 'Healthcare', 'QBTS': 'Technology',
+  'OKLO': 'Utilities', 'SMR': 'Utilities', 'RXRX': 'Healthcare',
+  'HIMS': 'Healthcare', 'IREN': 'Technology', 'NVTS': 'Technology',
+  'CRWV': 'Technology', 'RKLB': 'Industrials', 'CRCL': 'Financials',
+  'SOFI': 'Financials', 'JOBY': 'Industrials', 'ORCL': 'Technology',
+  'ONDS': 'Industrials', 'PBR': 'Energy', 'LMND': 'Financials',
+  'WDC': 'Technology', 'ASTS': 'Communications', 'NBIS': 'Technology',
+  'LPTH': 'Technology', 'ALMU': 'Technology', 'AEHR': 'Technology',
+
+  // User-added ETFs (2026-06-11)
+  'XOVR': 'ETF', 'VCX': 'ETF',
 };
 
 // ─── 유틸리티 함수 ───────────────────────────────────────────

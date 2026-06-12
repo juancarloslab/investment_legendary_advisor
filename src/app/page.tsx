@@ -486,7 +486,15 @@ function ComparisonTable({ results }: { results: ScreenerResult[] }) {
             <th className="text-left py-2 px-2 text-gray-400 font-medium">항목</th>
             {results.map((r) => (
               <th key={r.ticker} className="text-center py-2 px-2 text-white font-bold">
-                {r.ticker}
+                <div>{r.ticker}</div>
+                <a
+                  href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(r.ticker.replace('-', '.'))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-medium text-[#2962FF] hover:underline"
+                >
+                  📈 차트 ↗
+                </a>
               </th>
             ))}
           </tr>
@@ -774,6 +782,14 @@ function SingleResultView({ result }: { result: ScreenerResult }) {
             </div>
             <div className="mt-1 text-sm opacity-80">{v.guide}</div>
             <div className="mt-2 text-sm sm:text-lg opacity-90">{result.actionGuide}</div>
+            <a
+              href={`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(result.ticker.replace('-', '.'))}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#2962FF] text-white font-black text-xs rounded-none border-2 border-[#1A1A1A] shadow-[4px_4px_0px_0px_#1A1A1A] hover:shadow-[6px_6px_0px_0px_#1A1A1A] hover:translate-x-[-2px] hover:translate-y-[-2px] active:translate-x-[0px] active:translate-y-[0px] active:shadow-[2px_2px_0px_0px_#1A1A1A] transition-all"
+            >
+              📈 트레이딩뷰 차트 보기 ↗
+            </a>
           </div>
           <div className="text-right shrink-0">
             <div className="text-3xl sm:text-5xl font-bold">
