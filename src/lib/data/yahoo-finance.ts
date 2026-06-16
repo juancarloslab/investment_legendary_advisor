@@ -12,6 +12,7 @@
 
 import { ChartData, FinancialData, MarketBreadthData, DividendRawData, MarketOverview, MastersData } from '@/types';
 import { calculateRSI, calculateMA } from '../screeners/chart-screener';
+import type { WeeklyBar } from '../screeners/bitgak';
 import { getCached, setCache, TTL } from '../cache';
 import { createLogger } from '../logger';
 import { getSector } from './stock-universe';
@@ -171,6 +172,62 @@ export async function fetchChartData(ticker: string, deps?: ChartDataDeps): Prom
   setCache(cacheKey, chartData, TTL.CHART);
   log.info(`차트 데이터 수집 완료: ${ticker} (종가: ${chartData.close})`);
   return chartData;
+}
+
+// ─── 주봉 OHLC 수집 (빗각 탐지용) ─────────────────────
+
+interface YFChartQuote {
+  date?: Date | number | string;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+}
+
+/**
+ * 주봉(weekly) OHLC 수집. 빗각(Bitgak) 추세선 탐지용 — 고/저 wick이 필요해 별도 수집.
+ * 기본 10년 lookback, 7일 TTL 캐시.
+ */
+export async function fetchWeeklyBars(ticker: string, years: number = 10): Promise<WeeklyBar[]> {
+  const cacheKey = `bitgak:weekly:${ticker}`;
+  const cached = getCached<WeeklyBar[]>(cacheKey);
+  if (cached) {
+    log.debug(`주봉 데이터 캐시 히트: ${ticker}`);
+    return cached;
+  }
+
+  const yf = await getYF();
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setFullYear(startDate.getFullYear() - years);
+
+  const chartResult = await (yf as unknown as {
+    chart: (s: string, o: { period1: Date; period2: Date; interval: '1wk' }) => Promise<{ quotes?: YFChartQuote[] }>;
+  }).chart(ticker, { period1: startDate, period2: endDate, interval: '1wk' });
+
+  const quotes = Array.isArray(chartResult?.quotes) ? chartResult.quotes : [];
+  const bars: WeeklyBar[] = quotes.flatMap((q) => {
+    const dv = q.date;
+    const date = dv instanceof Date ? dv
+      : typeof dv === 'number' ? new Date(dv * 1000)
+      : typeof dv === 'string' ? new Date(dv)
+      : null;
+    if (!date || Number.isNaN(date.getTime())) return [];
+    if (!Number.isFinite(q.high) || !Number.isFinite(q.low) || !Number.isFinite(q.close)) return [];
+    return [{
+      date: date.toISOString().split('T')[0],
+      high: q.high as number,
+      low: q.low as number,
+      close: q.close as number,
+    }];
+  });
+
+  if (!bars.length) {
+    throw new Error(`${ticker}: 주봉 데이터를 가져올 수 없습니다`);
+  }
+
+  setCache(cacheKey, bars, TTL.WEEKLY);
+  log.info(`주봉 데이터 수집 완료: ${ticker} (${bars.length}주)`);
+  return bars;
 }
 
 // ─── 재무 데이터 수집 ────────────────────────────────

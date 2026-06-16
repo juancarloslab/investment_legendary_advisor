@@ -478,6 +478,9 @@ export default function DiscoverPage() {
           <Link href="/etf" className="text-gray-400 hover:text-white transition-colors py-1">
             📦 ETF 추천
           </Link>
+          <Link href="/bitgak" className="text-gray-400 hover:text-white transition-colors py-1">
+            📐 빗각
+          </Link>
         </div>
       </nav>
 
