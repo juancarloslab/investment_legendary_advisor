@@ -24,6 +24,7 @@
     "src/lib/response-metadata.ts",
     "src/lib/data/stock-universe.ts",
     "src/lib/data/yahoo-finance.ts",
+    "src/lib/signals.ts",
     "src/lib/config/scoring-thresholds.ts",
     "src/lib/validators.ts",
     "src/lib/screeners/chart-screener.ts",

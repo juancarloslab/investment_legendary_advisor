@@ -1218,6 +1218,9 @@ export default function Home() {
           <Link href="/bitgak" className="text-gray-400 hover:text-white transition-colors py-1">
             📐 빗각
           </Link>
+          <Link href="/signals" className="text-gray-400 hover:text-white transition-colors py-1 whitespace-nowrap">
+            🔔 신호
+          </Link>
         </div>
       </nav>
 

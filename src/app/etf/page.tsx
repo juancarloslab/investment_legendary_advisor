@@ -191,6 +191,7 @@ export default function ETFPage() {
             <Link href="/discover" className="text-sm text-gray-400 hover:text-white">종목발굴</Link>
             <Link href="/legends" className="text-sm text-gray-400 hover:text-white">레전드전략</Link>
             <Link href="/bitgak" className="text-sm text-gray-400 hover:text-white">빗각</Link>
+            <Link href="/signals" className="text-sm text-gray-400 hover:text-white">신호</Link>
             <button
               onClick={fetchReport}
               disabled={loading}

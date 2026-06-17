@@ -377,6 +377,9 @@ export default function BitgakPage() {
           <span className="text-[#D4F94E] font-black border-b-2 border-[#D4F94E] py-1 whitespace-nowrap">
             📐 빗각
           </span>
+          <Link href="/signals" className="text-gray-400 hover:text-white transition-colors py-1 whitespace-nowrap">
+            🔔 신호
+          </Link>
         </div>
       </nav>
 
