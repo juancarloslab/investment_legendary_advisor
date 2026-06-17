@@ -6,12 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run dev          # Start dev server (http://localhost:3000)
-npm run build        # Production build (use to verify changes compile)
+npm run build        # Production build
+npm run typecheck    # tsc --noEmit (fast standalone type check)
+npm run test         # Compile tests (tsconfig.tests.json) + run Node's test runner
 npm run lint         # ESLint check
 npm run start        # Start production server
 ```
 
-No test framework is configured. Verify changes by running `npm run build`.
+Verify changes with **`npm run typecheck` → `npm run test` → `npm run build`** (all three).
+
+**Testing notes:**
+- Tests are `tests/**/*.test.ts`, run by Node's built-in `node --test` against JS that `tsconfig.tests.json` compiles into `.tmp/tests/`. Tests import sources with **relative paths** (`../../src/lib/...`), not the `@/` alias.
+- `tsconfig.tests.json` has an **explicit `include` allowlist** — a new `src/lib/*` file is only compiled for tests if you add it there. Pure (import-free) modules are easiest to unit test.
+- `npm test`'s `**` glob needs **Node ≥ 22**. On Node 18 run tests directly: `npm run test:build && node --test $(find .tmp/tests/tests -name '*.test.js')`, or a single file: `... node --test .tmp/tests/tests/<dir>/<name>.test.js`.
 
 ## Deployment
 
@@ -50,28 +57,41 @@ Yahoo Finance Data → Individual Screeners → Combined Screener → Verdict + 
 
 **Single ticker** (`/api/screener/combined/[ticker]`): Parallel fetch of chart/financial/sentiment/dividend/masters data → score each → combine → return JSON.
 
-**Daily screening** (`/api/screening/daily`): Batch-processes ~55 stocks from `stock-universe.ts` in groups of 3 with 2s delays (Yahoo Finance rate limiting). Caches for 4 hours. Categorizes into: Fear Buys, Undervalued, Dividend Attractive, Momentum Leaders, Sector Rotation.
+**Daily screening** (`/api/screening/daily`, logic in `screeners/auto-screener.ts`): Batch-processes the ~193 stocks from `stock-universe.ts` (`getAllTickers()`) in groups of 5 with ~300ms delays (Yahoo Finance rate limiting). Caches for 4 hours. Categorizes into: Fear Buys, Undervalued, Dividend Attractive, Momentum Leaders, Sector Rotation.
 
-**ETF screening** (`/api/screening/etf`): Similar batch pipeline for ~50 ETFs from `etf-universe.ts`.
+**ETF screening** (`/api/screening/etf`, `screeners/etf-auto-screener.ts`): Similar batch pipeline for the ETFs in `etf-universe.ts`.
+
+### Research & Monitoring Tools (separate from the 0-70 score)
+
+These are intentionally **not** trade signals and do not feed the combined verdict. They follow a strict research posture: measure against a random/null baseline and surface an honest verdict (no edge → say so). Empirically the bitgak strategy shows **no trading edge**, and the pages render that conclusion — do not re-frame these as buy/sell signals.
+
+- **Bitgak** (`/bitgak`, `screeners/bitgak.ts` + `bitgak-screener.ts`): mechanical detection of 저저고/고고저 **weekly log-space trendlines** across the universe. Includes line-quality gates (no-violation, touch count, strength, slope, expiry), volume-confirmed breakouts, retest "밟기" entry points, quality stratification (2-touch vs 3-touch+ breakout rate vs synthetic ~25% null), and a built-in entry backtest (entry vs same-direction random baseline) — all computed in `runBitgakScreening`. Uses weekly OHLCV from `fetchWeeklyBars` (7-day TTL). Pivot confirmation delays detection by ~5 weeks (not a realtime signal).
+- **Signals** (`/signals`, `signals.ts` pure parse + `signals-store.ts`): receives TradingView webhook alerts at `/api/signals/webhook`, stores them in **Upstash Redis** (REST via `fetch`, env `UPSTASH_REDIS_REST_URL`/`_TOKEN` or legacy `KV_REST_API_*`) with an **in-memory fallback** when unset. Webhook auth via `SIGNALS_WEBHOOK_SECRET` (query `?token=` or body `secret`). Setup/deploy guide: `docs/signals-webhook.md`.
 
 ### Key Directories
 
 ```
 src/
+├── middleware.ts           # Next.js root middleware — rate limiting (30 req/min per IP, /api/* only)
 ├── app/                    # Pages + API routes
 │   ├── page.tsx            # Main stock analysis (single/multi ticker)
 │   ├── discover/page.tsx   # Daily screening recommendations
 │   ├── etf/page.tsx        # ETF recommendations
+│   ├── legends/page.tsx    # Legendary-investor strategy screening
+│   ├── bitgak/page.tsx     # Bitgak weekly-trendline research tool
+│   ├── signals/page.tsx    # TradingView webhook signal feed
 │   └── api/
 │       ├── screener/       # Per-ticker analysis endpoints
-│       └── screening/      # Batch screening endpoints (daily, etf, sector)
+│       ├── screening/      # Batch endpoints (daily, etf, sector, legends, bitgak)
+│       └── signals/        # Webhook receiver + feed
 ├── lib/
-│   ├── screeners/          # All scoring logic (chart, valuation, sentiment, dividend, masters, combined, etf, auto)
-│   ├── data/               # Data fetching (yahoo-finance.ts, sentiment-data.ts) + stock/ETF universe lists
+│   ├── screeners/          # Scoring + research logic (chart, valuation, sentiment, dividend, masters,
+│   │                       #   combined, etf, auto, etf-auto, bitgak, bitgak-screener)
+│   ├── data/               # Data fetching (yahoo-finance.ts incl. fetchWeeklyBars) + stock/ETF universe lists
+│   ├── signals.ts          # Pure TradingView payload parse (+ signals-store.ts: Upstash/in-memory)
 │   ├── cache.ts            # In-memory cache with TTL presets
-│   ├── validate-ticker.ts  # Input sanitization (regex: /^[A-Za-z0-9.\-^]{1,10}$/)
-│   └── middleware.ts       # Rate limiting (30 req/min per IP)
-└── types/index.ts          # All TypeScript interfaces
+│   └── validate-ticker.ts  # Input sanitization (regex: /^[A-Za-z0-9.\-^]{1,10}$/) — rejects '=' (futures use batch only)
+└── types/index.ts          # Shared TypeScript interfaces
 ```
 
 ### Caching
@@ -87,7 +107,7 @@ Cache key convention: `chart:{ticker}`, `market:vix`, `screening:daily`, etc. Ca
 
 ### Frontend
 
-All three pages (`page.tsx`, `discover/page.tsx`, `etf/page.tsx`) are self-contained `'use client'` components with no shared component library. UI text is hardcoded in Korean — no i18n system. Styled with Tailwind CSS.
+All pages are self-contained `'use client'` components with no shared component library. UI text is hardcoded in Korean — no i18n system. Styled with Tailwind CSS (neo-brutalist: `#2A2A2A` bg, `#D4F94E` accent, `border-2 border-[#1A1A1A]` + hard shadow). Cross-page nav is duplicated per page (no shared nav component).
 
 Scoring display uses `{score}/{max}점` format with color-coded interpretation. Verdicts include action-oriented Korean labels.
 
@@ -102,5 +122,7 @@ Scoring display uses `{score}/{max}점` format with color-coded interpretation. 
 - All UI text is in Korean. Respond in Korean when the user writes in Korean.
 - Score maximums vary by screener (25/20/25 for core, 20 for dividend, 70 total). These are hardcoded throughout — changing a max requires updating both screener logic and UI.
 - Sentiment screener data sources have fallback values. Each indicator tracks whether it's `'live'` or `'fallback'`.
-- The `stock-universe.ts` and `etf-universe.ts` files define which tickers are analyzed in batch screening.
+- The `stock-universe.ts` and `etf-universe.ts` files define which tickers are analyzed in batch screening (bitgak adds chart-only extras like `MGC=F` in `BITGAK_EXTRA`, kept out of the stock universe so the scoring screeners don't run on futures).
+- Bitgak/signals are **research & monitoring tools, not trade signals** — keep the random-baseline verification and "not a signal" disclaimers; don't re-litigate the no-edge finding.
 - Path alias: `@/*` maps to `./src/*`.
+- `git push` targets the `fork` remote (main's upstream); `origin` may be stale — use `git log @{u}..` / `git push`, not `origin/main`.
