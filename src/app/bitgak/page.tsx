@@ -99,7 +99,23 @@ interface BitgakReport {
   failedTickers: string[];
   results: BitgakScreenResult[];
   pooledStats: BitgakPooledStats;
+  entryBacktest: EntryBacktest;
   disclaimer: string;
+}
+
+interface BtRow {
+  horizon: number;
+  entryN: number;
+  entryWin: number | null;
+  entryMean: number | null;
+  baseWin: number | null;
+  baseMean: number | null;
+  edge: number | null;
+}
+interface EntryBacktest {
+  horizons: number[];
+  long: BtRow[];
+  short: BtRow[];
 }
 
 // ─── 표시 헬퍼 ───────────────────────────────────────
@@ -544,6 +560,59 @@ export default function BitgakPage() {
                 </div>
               </div>
             )}
+
+            {/* 빗각 밟기 타점 백테스트 — 타점 진입이 랜덤 대비 엣지가 있는가 */}
+            {report.entryBacktest && (() => {
+              const bt = report.entryBacktest;
+              const longEdges = bt.long.map((r) => r.edge).filter((e): e is number => e !== null);
+              const noEdge = longEdges.length > 0 && longEdges.every((e) => e <= 0.1);
+              const edgeColor = (e: number | null) => (e === null ? 'text-gray-500' : e > 0.1 ? 'text-[#D4F94E]' : e < -0.1 ? 'text-[#C45C3E]' : 'text-gray-400');
+              const fmtPair = (mean: number | null, win: number | null) =>
+                mean === null ? '—' : `${mean >= 0 ? '+' : ''}${mean}% / ${win}%`;
+              const renderRows = (rows: BtRow[]) =>
+                rows.map((r) => (
+                  <tr key={r.horizon} className="border-t border-[#1A1A1A]/40">
+                    <td className="py-1 px-2 text-gray-400">{r.horizon}주</td>
+                    <td className="py-1 px-2 text-right text-gray-300">{fmtPair(r.entryMean, r.entryWin)}<span className="text-gray-600 text-[10px]"> (n={r.entryN})</span></td>
+                    <td className="py-1 px-2 text-right text-gray-500">{fmtPair(r.baseMean, r.baseWin)}</td>
+                    <td className={`py-1 px-2 text-right font-bold ${edgeColor(r.edge)}`}>{r.edge === null ? '—' : `${r.edge >= 0 ? '+' : ''}${r.edge}%p`}</td>
+                  </tr>
+                ));
+              return (
+                <div className="p-3 mb-6 bg-[#1A1A1A]/40 border-2 border-[#1A1A1A]">
+                  <div className="text-xs text-gray-400 mb-2 font-bold">
+                    🧪 빗각 밟기 타점 백테스트 — &ldquo;돌파 후 밟기 진입이 같은 방향 랜덤 진입보다 나은가?&rdquo;
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {([['저저고 → 롱', bt.long], ['고고저 → 숏', bt.short]] as const).map(([label, rows]) => (
+                      <div key={label} className="overflow-x-auto">
+                        <div className="text-[11px] text-gray-500 mb-1">{label}</div>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-gray-600">
+                              <th className="text-left py-1 px-2 font-medium">호라이즌</th>
+                              <th className="text-right py-1 px-2 font-medium">타점 평균/승률</th>
+                              <th className="text-right py-1 px-2 font-medium">랜덤</th>
+                              <th className="text-right py-1 px-2 font-medium">엣지</th>
+                            </tr>
+                          </thead>
+                          <tbody>{renderRows(rows)}</tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                  <div className={`mt-2 p-2 border-l-2 ${noEdge ? 'border-[#C45C3E]' : 'border-amber-400'}`}>
+                    <span className={`text-xs font-black ${noEdge ? 'text-[#C45C3E]' : 'text-amber-400'}`}>
+                      ⚖️ 판정: {noEdge ? '타점 진입은 랜덤 대비 엣지 없음 (롱은 오히려 음수)' : '엣지 미미/혼재 — 표본·기간 확인 필요'}
+                    </span>
+                    <div className="text-[10px] text-gray-500 mt-1 leading-relaxed">
+                      타점에서 보이는 +수익은 대부분 생존자 편향 유니버스의 상승 드리프트입니다. &lsquo;엣지(타점−랜덤)&rsquo;가 0보다
+                      유의하게 커야 타점에 매매적 의미가 있습니다. 관찰용 지표이며 매매 신호가 아닙니다.
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* 결과 해석 가이드 — 경우의 수별 의미 (토글) */}
             <div className="mb-6">

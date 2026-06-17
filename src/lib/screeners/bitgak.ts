@@ -386,6 +386,42 @@ function classifyStatus(gapPct: number, role: LineRole, p: BitgakParams): Curren
  *  고고저(지지): 종가가 선 아래로 이탈 → 이후 고가가 선까지 되돌아와 종가가 선 아래에서 저항 = 숏 타점.
  *  지지/저항이 깨지면(반대 종가) 셋업 무효 → 재돌파 필요. 마지막 봉이 밟는 중이면 status='활성'.
  */
+/** 완성 이후 모든 밟기 진입 봉 인덱스 + 마지막 봉 시점의 돌파 유지 여부를 스캔한다. */
+export function scanEntries(
+  bars: WeeklyBar[],
+  slope: number,
+  intercept: number,
+  role: LineRole,
+  fromIndex: number,
+  p: BitgakParams,
+): { indices: number[]; brokenAtEnd: boolean } {
+  const indices: number[] = [];
+  let broken = false;
+  for (let i = fromIndex + 1; i < bars.length; i++) {
+    const line = lineValueAt(slope, intercept, i);
+    if (role === 'resistance') {
+      if (!broken) {
+        if (bars[i].close > line * (1 + p.breakTol)) broken = true;
+        continue;
+      }
+      const stepped = bars[i].low <= line * (1 + p.tol); // 선까지 되돌아와 밟음
+      const held = bars[i].close >= line * (1 - p.breakTol); // 종가가 선 위에서 지지
+      if (stepped && held) indices.push(i);
+      else if (bars[i].close < line * (1 - p.breakTol)) broken = false; // 지지 실패 → 무효
+    } else {
+      if (!broken) {
+        if (bars[i].close < line * (1 - p.breakTol)) broken = true;
+        continue;
+      }
+      const stepped = bars[i].high >= line * (1 - p.tol);
+      const held = bars[i].close <= line * (1 + p.breakTol);
+      if (stepped && held) indices.push(i);
+      else if (bars[i].close > line * (1 + p.breakTol)) broken = false;
+    }
+  }
+  return { indices, brokenAtEnd: broken };
+}
+
 export function detectEntries(
   bars: WeeklyBar[],
   slope: number,
@@ -396,42 +432,18 @@ export function detectEntries(
 ): EntrySetup {
   const direction: EntrySetup['direction'] = role === 'resistance' ? '롱' : '숏';
   const lastIdx = bars.length - 1;
-  const entries: number[] = []; // 확정된 밟기-지지/저항 봉 인덱스
-  let broken = false;
-
-  for (let i = fromIndex + 1; i < bars.length; i++) {
-    const line = lineValueAt(slope, intercept, i);
-    if (role === 'resistance') {
-      if (!broken) {
-        if (bars[i].close > line * (1 + p.breakTol)) broken = true;
-        continue;
-      }
-      const stepped = bars[i].low <= line * (1 + p.tol); // 선까지 되돌아와 밟음
-      const held = bars[i].close >= line * (1 - p.breakTol); // 종가가 선 위에서 지지
-      if (stepped && held) entries.push(i);
-      else if (bars[i].close < line * (1 - p.breakTol)) broken = false; // 지지 실패 → 무효
-    } else {
-      if (!broken) {
-        if (bars[i].close < line * (1 - p.breakTol)) broken = true;
-        continue;
-      }
-      const stepped = bars[i].high >= line * (1 - p.tol);
-      const held = bars[i].close <= line * (1 + p.breakTol);
-      if (stepped && held) entries.push(i);
-      else if (bars[i].close > line * (1 + p.breakTol)) broken = false;
-    }
-  }
+  const { indices, brokenAtEnd } = scanEntries(bars, slope, intercept, role, fromIndex, p);
 
   // 현재(마지막 봉)가 밟는 중인지 — 아직 종가 확정 전이어도 '활성'으로 관찰 대상
   const lineNow = lineValueAt(slope, intercept, lastIdx);
-  const steppingNow = broken && (role === 'resistance'
+  const steppingNow = brokenAtEnd && (role === 'resistance'
     ? bars[lastIdx].low <= lineNow * (1 + p.tol)
     : bars[lastIdx].high >= lineNow * (1 - p.tol));
 
-  if (entries.length === 0 && !steppingNow) {
+  if (indices.length === 0 && !steppingNow) {
     return { status: '없음', direction, date: null, lineValue: null, refPrice: null, count: 0 };
   }
-  const lastEntry = entries.length ? entries[entries.length - 1] : -1;
+  const lastEntry = indices.length ? indices[indices.length - 1] : -1;
   const live = steppingNow || lastEntry === lastIdx;
   const refIdx = live ? lastIdx : lastEntry;
   return {
@@ -440,7 +452,7 @@ export function detectEntries(
     date: bars[refIdx].date,
     lineValue: round2(lineValueAt(slope, intercept, refIdx)),
     refPrice: round2(bars[refIdx].close),
-    count: entries.length,
+    count: indices.length,
   };
 }
 

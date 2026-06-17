@@ -9,7 +9,7 @@ import { fetchWeeklyBars } from '../data/yahoo-finance';
 import { getAllTickers, STOCK_NAMES } from '../data/stock-universe';
 import { getCached, setCache } from '../cache';
 import { createLogger } from '../logger';
-import { detectBitgak, WEEKLY_PARAMS, type BitgakResult, type BitgakParams } from './bitgak';
+import { detectBitgak, scanEntries, WEEKLY_PARAMS, type BitgakResult, type BitgakParams, type LineRole } from './bitgak';
 
 const log = createLogger('BitgakScreener');
 
@@ -75,6 +75,28 @@ function tier(decided: number, breakouts: number): BreakoutTier {
   return { decided, breakouts, rate: decided > 0 ? Math.round((breakouts / decided) * 1000) / 10 : null };
 }
 
+/**
+ * 빗각 밟기 타점 백테스트 한 행 (방향·호라이즌별).
+ * 타점 진입 = 돌파 후 빗각을 되밟고 지지/저항받은 봉에서 방향 진입.
+ * 베이스라인 = 같은 방향으로 전 종목 아무 주에나 진입(드리프트 통제).
+ * edge = 타점 평균 − 베이스라인 평균(%p). 0보다 유의하게 커야 타점에 의미.
+ */
+export interface BtRow {
+  horizon: number; // 주
+  entryN: number;
+  entryWin: number | null; // %
+  entryMean: number | null; // %
+  baseWin: number | null;
+  baseMean: number | null;
+  edge: number | null; // %p
+}
+
+export interface EntryBacktest {
+  horizons: number[];
+  long: BtRow[]; // 저저고 → 롱
+  short: BtRow[]; // 고고저 → 숏
+}
+
 export interface BitgakReport {
   generatedAt: string;
   params: BitgakParams;
@@ -85,8 +107,13 @@ export interface BitgakReport {
   /** 완성 패턴이 1개 이상인 종목만, 관련도 순 정렬 */
   results: BitgakScreenResult[];
   pooledStats: BitgakPooledStats;
+  /** 빗각 밟기 타점 백테스트 (전 종목, 타점 vs 랜덤 선행수익) */
+  entryBacktest: EntryBacktest;
   disclaimer: string;
 }
+
+const BT_HORIZONS = [1, 4, 8]; // 백테스트 선행수익 호라이즌(주)
+type BtAcc = { n: number; sum: number; wins: number };
 
 const DISCLAIMER =
   '연구·가설검증용 도구입니다. 매매 신호가 아니며 투자 자문이 아닙니다. ' +
@@ -119,12 +146,47 @@ export async function runBitgakScreening(forceRefresh = false): Promise<BitgakRe
   const results: BitgakScreenResult[] = [];
   const failedTickers: string[] = [];
 
+  // 타점 백테스트 누적기 (방향 × 호라이즌). Node 단일스레드 + await 이후 동기 누적이라 경합 없음.
+  const mkAcc = (): BtAcc[] => BT_HORIZONS.map(() => ({ n: 0, sum: 0, wins: 0 }));
+  const btEntry: Record<'롱' | '숏', BtAcc[]> = { 롱: mkAcc(), 숏: mkAcc() };
+  const btBase: Record<'롱' | '숏', BtAcc[]> = { 롱: mkAcc(), 숏: mkAcc() };
+  const addRet = (acc: BtAcc, r: number) => { acc.n++; acc.sum += r; if (r > 0) acc.wins++; };
+
   for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
     const batch = tickers.slice(i, i + BATCH_SIZE);
     const settled = await Promise.allSettled(
       batch.map(async (ticker) => {
         const bars = await fetchWeeklyBars(ticker);
         const detected = detectBitgak(ticker, bars, WEEKLY_PARAMS);
+
+        // 베이스라인: 이 종목 전봉의 방향별 선행수익(아무 주에나 진입)
+        for (let bi = 0; bi < bars.length; bi++) {
+          for (let hi = 0; hi < BT_HORIZONS.length; hi++) {
+            const h = BT_HORIZONS[hi];
+            if (bi + h >= bars.length) continue;
+            const r = bars[bi + h].close / bars[bi].close - 1;
+            addRet(btBase.롱[hi], r);
+            addRet(btBase.숏[hi], -r);
+          }
+        }
+        // 타점 진입: 돌파 후 밟기 봉에서 방향 진입 (봉·방향 중복 제거)
+        const seen = new Set<string>();
+        for (const p of detected.patterns) {
+          const dir: '롱' | '숏' = p.type === '저저고' ? '롱' : '숏';
+          const role: LineRole = p.type === '저저고' ? 'resistance' : 'support';
+          for (const bi of scanEntries(bars, p.slope, p.intercept, role, p.completion.index, WEEKLY_PARAMS).indices) {
+            const key = `${bi}:${dir}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            for (let hi = 0; hi < BT_HORIZONS.length; hi++) {
+              const h = BT_HORIZONS[hi];
+              if (bi + h >= bars.length) continue;
+              const raw = bars[bi + h].close / bars[bi].close - 1;
+              addRet(btEntry[dir][hi], dir === '롱' ? raw : -raw);
+            }
+          }
+        }
+
         return { ...detected, name: STOCK_NAMES[ticker] || BITGAK_EXTRA[ticker] || ticker } as BitgakScreenResult;
       }),
     );
@@ -189,6 +251,24 @@ export async function runBitgakScreening(forceRefresh = false): Promise<BitgakRe
     retestedBreakouts: broke.filter((pt) => pt.nextTouch.retest === true).length,
   };
 
+  // 타점 백테스트 통계 산출
+  const r1 = (x: number) => Math.round(x * 10) / 10;
+  const r2 = (x: number) => Math.round(x * 100) / 100;
+  const mkRow = (h: number, e: BtAcc, b: BtAcc): BtRow => ({
+    horizon: h,
+    entryN: e.n,
+    entryWin: e.n ? r1((e.wins / e.n) * 100) : null,
+    entryMean: e.n ? r2((e.sum / e.n) * 100) : null,
+    baseWin: b.n ? r1((b.wins / b.n) * 100) : null,
+    baseMean: b.n ? r2((b.sum / b.n) * 100) : null,
+    edge: e.n && b.n ? r2((e.sum / e.n - b.sum / b.n) * 100) : null,
+  });
+  const entryBacktest: EntryBacktest = {
+    horizons: BT_HORIZONS,
+    long: BT_HORIZONS.map((h, hi) => mkRow(h, btEntry.롱[hi], btBase.롱[hi])),
+    short: BT_HORIZONS.map((h, hi) => mkRow(h, btEntry.숏[hi], btBase.숏[hi])),
+  };
+
   const successCount = tickers.length - failedTickers.length;
   const report: BitgakReport = {
     generatedAt: new Date().toISOString(),
@@ -199,6 +279,7 @@ export async function runBitgakScreening(forceRefresh = false): Promise<BitgakRe
     failedTickers,
     results,
     pooledStats,
+    entryBacktest,
     disclaimer: DISCLAIMER,
   };
 
