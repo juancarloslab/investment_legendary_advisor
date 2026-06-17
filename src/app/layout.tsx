@@ -8,7 +8,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: '디킴의 투자분석 | Museum Brutalism Edition',
+  title: 'Juan Carlos의 투자 분석 | Museum Brutalism Edition',
   description: '차트·주가·역발상 3종 판독기로 미국 주식을 분석합니다 - Museum Brutalism 디자인',
 };
 

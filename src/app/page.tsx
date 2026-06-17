@@ -1188,7 +1188,7 @@ export default function Home() {
       <header className="border-b-2 border-[#1A1A1A] px-4 sm:px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-lg sm:text-xl font-bold">📊 디킴의 투자분석 판독기</h1>
+            <h1 className="text-lg sm:text-xl font-bold">📊 Juan Carlos의 투자 분석 판독기</h1>
             <p className="text-xs sm:text-sm text-gray-400">차트·가치·심리 3종 분석 기반 미국주식 매수 타이밍 도구</p>
           </div>
           {marketData && (
