@@ -25,9 +25,16 @@ interface BitgakPattern {
     outcome: '돌파' | '거부' | '미도달' | '판정중';
     date: string | null;
     lineValue: number | null;
+    volumeConfirmed: boolean | null;
+    retest: boolean | null;
   };
+  touches: number;
+  confirmed: boolean;
+  meanTouchErrorPct: number;
+  spanWeeks: number;
+  strength: number;
   currentGapPct: number;
-  currentStatus: '터치임박' | '접근중' | '관망' | '이탈';
+  currentStatus: '터치임박' | '접근중' | '관망' | '이탈' | '만료';
 }
 
 interface BitgakScreenResult {
@@ -41,6 +48,12 @@ interface BitgakScreenResult {
   patterns: BitgakPattern[];
 }
 
+interface BreakoutTier {
+  decided: number;
+  breakouts: number;
+  rate: number | null;
+}
+
 interface BitgakPooledStats {
   totalPatterns: number;
   breakouts: number;
@@ -49,6 +62,10 @@ interface BitgakPooledStats {
   pending: number;
   breakoutRate: number | null;
   syntheticNullRate: number;
+  twoTouch: BreakoutTier;
+  confirmed: BreakoutTier;
+  volumeConfirmedBreakouts: number;
+  retestedBreakouts: number;
 }
 
 interface BitgakReport {
@@ -60,6 +77,13 @@ interface BitgakReport {
     maxSpan: number;
     breakTol: number;
     confirm: number;
+    violTol: number;
+    minTouches: number;
+    maxLogSlope: number;
+    volLookback: number;
+    volMult: number;
+    retestWindow: number;
+    expireGap: number;
   };
   totalAnalyzed: number;
   successCount: number;
@@ -72,14 +96,15 @@ interface BitgakReport {
 
 // ─── 표시 헬퍼 ───────────────────────────────────────
 
-type StatusFilter = '전체' | '터치임박' | '접근중' | '이탈' | '관망';
-const STATUS_FILTERS: StatusFilter[] = ['전체', '터치임박', '접근중', '이탈', '관망'];
+type StatusFilter = '전체' | '터치임박' | '접근중' | '이탈' | '관망' | '만료';
+const STATUS_FILTERS: StatusFilter[] = ['전체', '터치임박', '접근중', '이탈', '관망', '만료'];
 
 const STATUS_STYLE: Record<string, string> = {
   터치임박: 'bg-[#D4F94E] text-[#1A1A1A]',
   접근중: 'bg-amber-500/80 text-[#1A1A1A]',
   이탈: 'bg-[#C45C3E] text-white',
   관망: 'bg-[#3A3A3A] text-gray-300',
+  만료: 'bg-[#2A2A2A] text-gray-500',
 };
 
 const OUTCOME_STYLE: Record<string, string> = {
@@ -89,8 +114,164 @@ const OUTCOME_STYLE: Record<string, string> = {
   판정중: 'text-amber-400',
 };
 
+function strengthColor(strength: number): string {
+  if (strength >= 70) return 'text-[#D4F94E]';
+  if (strength >= 50) return 'text-amber-400';
+  return 'text-gray-400';
+}
+
+function rateColor(rate: number | null, baseline: number): string {
+  if (rate === null) return 'text-gray-500';
+  return rate > baseline ? 'text-[#D4F94E]' : 'text-[#C45C3E]';
+}
+
+// ─── 결과 해석 (경우의 수별 설명) ─────────────────────
+// 모든 문구는 BitgakPattern의 기존 필드에서 파생 — 매매 신호가 아니라 "선이 어디 있는지" 해설.
+
+const STATUS_DESC: Record<string, string> = {
+  터치임박: '현재가가 선에 ±1.5% 안으로 붙어 있음 — 돌파/거부가 임박한 관찰 구간',
+  접근중: '현재가가 선(±4.5%)에 접근하는 중 — 곧 터치 여부가 갈림',
+  이탈: '현재가가 이미 선을 넘어선 상태 — 넘어선 선은 반대 역할(저항↔지지)로 전환 가능',
+  관망: '현재가가 선에서 떨어져 있어 지금은 매매와 무관 — 가격이 다가올 때 다시 볼 선',
+  만료: '현재가가 선에서 ±80% 넘게 벌어져 외삽이 무의미 — 과거 기록용, 현재 레퍼런스 아님',
+};
+
+const OUTCOME_DESC: Record<string, string> = {
+  돌파: '완성 후 첫 재터치에서 종가로 선을 넘김(돌파) — 검증된 과거 사건 1건',
+  거부: '완성 후 첫 재터치에서 돌파 실패(거부) — 선이 한 번 더 유효하게 작동',
+  미도달: '완성 후 아직 선을 다시 터치한 적 없음 — 다음-터치 표본 없음',
+  판정중: '재터치는 있었으나 판정 윈도우가 데이터 끝에 걸려 미확정',
+};
+
+/** 한 줄 요약 해석 (표/카드 인라인용) */
+function describeShort(p: BitgakPattern): string {
+  const kind = p.type === '저저고' ? '상승저점 저항선' : '하락고점 지지선';
+  const conf = p.confirmed ? `${p.touches}터치 확정선` : `${p.touches}터치 임시선`;
+  return `${kind}·${conf}(강도 ${p.strength}) — ${STATUS_DESC[p.currentStatus]}`;
+}
+
+/** 조건 조합(상태×결과×확정×거래량×리테스트)에 따른 전체 해석 문단 */
+function describePattern(p: BitgakPattern): string {
+  const lineNature = p.type === '저저고'
+    ? '상승하는 저점들을 이어 위로 연장한 저항선입니다. 종가로 위를 넘으면(돌파) 추가 상승 여력, 못 넘고 밀리면(거부) 저항이 유효한 것으로 봅니다.'
+    : '하락하는 고점들을 이어 아래로 연장한 지지선입니다. 종가로 아래를 깨면(이탈/돌파) 추가 하락 위험, 닿고 튀면(거부) 지지가 유효한 것으로 봅니다.';
+
+  const quality = p.confirmed
+    ? `같은 종류 피벗이 ${p.touches}번 닿은 확정선(강도 ${p.strength}/100, 평균이격 ${p.meanTouchErrorPct}%)이라 선 위치 신뢰도가 상대적으로 높습니다.`
+    : `아직 앵커 ${p.touches}점만으로 그은 임시선(강도 ${p.strength}/100)이라, 세 번째 터치로 확정되기 전엔 신뢰도가 낮습니다.`;
+
+  const here = {
+    터치임박: '현재 이 선에 ±1.5%로 바짝 붙어 있어, 돌파냐 거부냐가 임박한 관찰 구간입니다.',
+    접근중: '현재 이 선(±4.5%)에 접근하는 중이라 곧 터치 여부가 갈립니다.',
+    이탈: '현재가가 이미 이 선을 넘어선 상태로, 넘어선 선은 반대 역할(저항↔지지)로 바뀌어 되돌림 시 레퍼런스가 될 수 있습니다.',
+    관망: '현재가가 이 선에서 떨어져 있어 지금 당장은 매매와 무관하며, 가격이 다가올 때 다시 볼 선입니다.',
+    만료: '현재가가 이 선에서 ±80% 넘게 벌어져 외삽이 무의미합니다 — 과거 기록용일 뿐 현재 레퍼런스가 아닙니다.',
+  }[p.currentStatus];
+
+  const nt = p.nextTouch;
+  let past: string;
+  if (nt.outcome === '돌파') {
+    const mods: string[] = [];
+    if (nt.volumeConfirmed) mods.push('거래량 동반(신뢰도↑)');
+    if (nt.retest) mods.push('돌파 후 리테스트까지 확인(되돌림은 문헌상 최고 승률 셋업)');
+    past = `완성(${p.completion.date}) 이후 첫 재터치(${nt.date})에서 종가로 선을 돌파했습니다${mods.length ? ' — ' + mods.join(', ') : ' — 다만 거래량 동반·리테스트는 확인되지 않았습니다'}.`;
+  } else if (nt.outcome === '거부') {
+    past = `완성(${p.completion.date}) 이후 첫 재터치(${nt.date})에서 돌파에 실패(거부)했습니다 — 선이 한 번 더 유효하게 작동한 사례입니다.`;
+  } else if (nt.outcome === '미도달') {
+    past = '완성 이후 아직 이 선을 다시 터치한 적이 없어 다음-터치 표본이 없습니다.';
+  } else {
+    past = '재터치는 있었으나 판정 윈도우가 데이터 끝에 걸려 돌파/거부가 아직 확정되지 않았습니다(판정중).';
+  }
+
+  const caveat = '⚠️ 단일 종목의 다음-터치 결과는 통계적으로 노이즈(5–48%)와 구분되지 않습니다. 신호가 아니라 "선이 어디 있는지"의 지도로만 보세요.';
+
+  return [lineNature, quality, here, past, caveat].join(' ');
+}
+
+// ─── 전체(풀링) 결과 자동 판정 — 경우의 수별 설명 ──────
+// 실제 표본의 돌파율을 널(랜덤워크)·층(2터치 vs 3터치+)과 비교해 어느 결론에 해당하는지 분기.
+// z-검정(근사)으로 유의성을 가늠하되, 연구용 잣대일 뿐 매매 신호가 아님.
+
+type Tone = 'support' | 'weak' | 'reject' | 'insufficient';
+const TONE_BORDER: Record<Tone, string> = {
+  support: 'border-[#D4F94E]', weak: 'border-amber-400', reject: 'border-[#C45C3E]', insufficient: 'border-gray-500',
+};
+const TONE_TEXT: Record<Tone, string> = {
+  support: 'text-[#D4F94E]', weak: 'text-amber-400', reject: 'text-[#C45C3E]', insufficient: 'text-gray-400',
+};
+
+interface PooledVerdict { verdict: string; tone: Tone; detail: string; sub: string; }
+
+function interpretPooled(stats: BitgakPooledStats): PooledVerdict {
+  const c = stats.confirmed, t = stats.twoTouch;
+  const decidedTotal = c.decided + t.decided;
+  const p0 = stats.syntheticNullRate / 100; // 널 비율 (예: 0.25)
+
+  // 거래량·리테스트 부가 설명 (모든 경우에 공통으로 덧붙임)
+  const volPct = stats.breakouts > 0 ? Math.round((stats.volumeConfirmedBreakouts / stats.breakouts) * 100) : 0;
+  const rtPct = stats.breakouts > 0 ? Math.round((stats.retestedBreakouts / stats.breakouts) * 100) : 0;
+  const sub = stats.breakouts > 0
+    ? `부가 조건: 전체 돌파 ${stats.breakouts}건 중 거래량 동반 ${stats.volumeConfirmedBreakouts}건(${volPct}%) · 리테스트 ${stats.retestedBreakouts}건(${rtPct}%). ` +
+      (volPct < 50 ? '거래량 동반 돌파가 절반 미만이라 "거래량=신뢰" 통념도 이 표본에선 약합니다.' : '돌파 다수가 거래량을 동반했습니다(추가 검정 필요).')
+    : '아직 돌파 사건이 없어 거래량·리테스트 조건은 평가할 수 없습니다.';
+
+  // 1) 표본 부족
+  if (c.rate === null || t.rate === null || decidedTotal < 100 || c.decided < 30 || t.decided < 30) {
+    return {
+      verdict: '표본 부족 — 판단 보류',
+      tone: 'insufficient',
+      detail: `판정 가능 표본이 ${decidedTotal}건(확정선 ${c.decided} / 임시선 ${t.decided})뿐이라 이항검정 전 단계입니다. 전 종목으로 새로고침해 수백 건을 쌓기 전에는 어떤 층별 차이도 노이즈로 보세요.`,
+      sub,
+    };
+  }
+
+  // z-검정 (근사)
+  const zVsNull = (rate: number, n: number) => (rate / 100 - p0) / Math.sqrt((p0 * (1 - p0)) / n);
+  const zC = zVsNull(c.rate, c.decided); // 확정선 vs 널
+  const zT = zVsNull(t.rate, t.decided); // 임시선 vs 널
+  const pooled = (c.breakouts + t.breakouts) / (c.decided + t.decided);
+  const seDiff = Math.sqrt(pooled * (1 - pooled) * (1 / c.decided + 1 / t.decided));
+  const zDiff = seDiff > 0 ? (c.rate / 100 - t.rate / 100) / seDiff : 0;
+  const SIG = 1.96; // 95%
+
+  const cAbove = zC > SIG, cBelow = zC < -SIG, tAbove = zT > SIG, tBelow = zT < -SIG;
+  const qMatters = zDiff > SIG, qReverse = zDiff < -SIG;
+  const nums = `확정선 ${c.rate}%(${c.breakouts}/${c.decided}) · 임시선 ${t.rate}%(${t.breakouts}/${t.decided}) · 널 ~${stats.syntheticNullRate}%`;
+
+  // 2) 가설 지지: 품질이 유의하게 우위 + 확정선이 널 상회
+  if (qMatters && cAbove) {
+    return { verdict: '가설 지지 (잠정)', tone: 'support',
+      detail: `${nums}. 3터치+ 확정선이 임시선보다, 또 널보다 유의하게(z≈${zDiff.toFixed(1)}/${zC.toFixed(1)}) 높습니다 — 선 품질이 돌파를 예측한다는 가설을 잠정 지지합니다. 단 생존자 편향·다중검정을 통제한 재현이 필요합니다.`, sub };
+  }
+  // 3) 품질 효과는 있으나 절대수준이 널 이하
+  if (qMatters && !cAbove) {
+    return { verdict: '약한 지지 — 품질차는 있으나 절대수준 미달', tone: 'weak',
+      detail: `${nums}. 확정선이 임시선보다는 높지만(z≈${zDiff.toFixed(1)}) 널(~${stats.syntheticNullRate}%)을 넘지는 못합니다. "품질 높은 선이 덜 나쁘다" 수준이라 매매 우위로 보기 어렵습니다.`, sub };
+  }
+  // 4) 빗각선 자체는 널 상회하나 터치 수는 무관
+  if (!qMatters && !qReverse && (cAbove || tAbove) && !cBelow && !tBelow) {
+    return { verdict: '약한 지지 — 빗각선은 유효, 터치 수는 무관', tone: 'weak',
+      detail: `${nums}. 두 층 모두 널을 상회해 빗각선 자체엔 약한 정보가 있을 수 있으나, 확정선과 임시선 차이는 노이즈(z≈${zDiff.toFixed(1)})입니다 — 터치 수를 더 쳐줄 근거는 없습니다.`, sub };
+  }
+  // 5) 역설: 임시선이 유의하게 더 높음 (과적합/노이즈 의심)
+  if (qReverse) {
+    return { verdict: '가설 기각 — 역설(임시선이 더 높음)', tone: 'reject',
+      detail: `${nums}. 오히려 2터치 임시선 돌파율이 더 높습니다(z≈${zDiff.toFixed(1)}). 품질 게이트가 돌파를 예측한다는 가설과 반대 방향 — 노이즈/과적합으로 의심됩니다.`, sub };
+  }
+  // 6) 거부 우세: 돌파율이 널보다 유의하게 낮음
+  if (cBelow && tBelow) {
+    return { verdict: '가설 기각 — 오히려 거부 우세', tone: 'reject',
+      detail: `${nums}. 두 층 모두 돌파율이 널보다 유의하게 낮습니다 — 선에 닿으면 돌파보다 거부될 확률이 높습니다. 빗각을 "돌파 신호"로 쓰면 안 됩니다(컨트래리언 여지는 별도 검정 필요).`, sub };
+  }
+  // 7) 무상관·랜덤: 층 차이도 없고 널과도 구분 안 됨 (전 종목 표본의 실제 결과)
+  return { verdict: '가설 기각 — 품질 무상관·랜덤 수준', tone: 'reject',
+    detail: `${nums}. 확정선과 임시선이 사실상 같고(z≈${zDiff.toFixed(1)}), 둘 다 널(~${stats.syntheticNullRate}%)과 통계적으로 구분되지 않습니다(z≈${zC.toFixed(1)}/${zT.toFixed(1)}). 터치 수는 돌파를 예측하지 못하며, 다음-터치는 매매 신호가 아닙니다.`, sub };
+}
+
 function tvLink(ticker: string): string {
-  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(ticker.replace('-', '.'))}`;
+  // Yahoo 선물 표기(XYZ=F) → TradingView 연속물 표기(XYZ1!), 그 외 BRK-B → BRK.B
+  const sym = ticker.endsWith('=F') ? ticker.slice(0, -2) + '1!' : ticker.replace('-', '.');
+  return `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(sym)}`;
 }
 
 function fmt(n: number): string {
@@ -115,6 +296,7 @@ export default function BitgakPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('전체');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   const fetchReport = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -263,12 +445,121 @@ export default function BitgakPage() {
               </div>
             )}
 
+            {/* 선 품질 가설 검정 (2026-06-16) — 터치 수가 돌파율을 끌어올리는가 */}
+            {stats && (
+              <div className="p-3 mb-6 bg-[#1A1A1A]/40 border-2 border-[#1A1A1A]">
+                <div className="text-xs text-gray-400 mb-2 font-bold">
+                  🔬 선 품질 가설 검정 — &ldquo;터치가 많고 거래량을 동반한 선일수록 돌파율이 높은가?&rdquo;
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-2 bg-[#3A3A3A]/40 border border-[#1A1A1A]">
+                    <div className="text-[10px] text-gray-500">2터치선 돌파율</div>
+                    <div className={`text-lg font-black ${rateColor(stats.twoTouch.rate, stats.syntheticNullRate)}`}>
+                      {stats.twoTouch.rate !== null ? `${stats.twoTouch.rate}%` : '—'}
+                    </div>
+                    <div className="text-[10px] text-gray-600">판정 {stats.twoTouch.decided}건</div>
+                  </div>
+                  <div className="p-2 bg-[#3A3A3A]/40 border border-[#1A1A1A]">
+                    <div className="text-[10px] text-gray-500">3터치+ 확정선 돌파율</div>
+                    <div className={`text-lg font-black ${rateColor(stats.confirmed.rate, stats.syntheticNullRate)}`}>
+                      {stats.confirmed.rate !== null ? `${stats.confirmed.rate}%` : '—'}
+                    </div>
+                    <div className="text-[10px] text-gray-600">판정 {stats.confirmed.decided}건</div>
+                  </div>
+                  <div className="p-2 bg-[#3A3A3A]/40 border border-[#1A1A1A]">
+                    <div className="text-[10px] text-gray-500">거래량 동반 돌파</div>
+                    <div className="text-lg font-black text-gray-300">
+                      {stats.volumeConfirmedBreakouts}
+                      <span className="text-xs text-gray-600">/{stats.breakouts}</span>
+                    </div>
+                    <div className="text-[10px] text-gray-600">돌파봉 거래량 &gt; 추세평균×1.5</div>
+                  </div>
+                  <div className="p-2 bg-[#3A3A3A]/40 border border-[#1A1A1A]">
+                    <div className="text-[10px] text-gray-500">돌파 후 리테스트</div>
+                    <div className="text-lg font-black text-gray-300">
+                      {stats.retestedBreakouts}
+                      <span className="text-xs text-gray-600">/{stats.breakouts}</span>
+                    </div>
+                    <div className="text-[10px] text-gray-600">최고 승률 셋업(되돌림 확인)</div>
+                  </div>
+                </div>
+                {/* 경우의 수별 자동 판정 — 실제 표본 숫자로 결론 분기 */}
+                {(() => {
+                  const v = interpretPooled(stats);
+                  return (
+                    <div className={`mt-3 p-2.5 bg-[#2A2A2A]/70 border-l-2 ${TONE_BORDER[v.tone]}`}>
+                      <div className={`text-xs font-black ${TONE_TEXT[v.tone]}`}>⚖️ 현재 표본 판정: {v.verdict}</div>
+                      <div className="text-[11px] text-gray-300 mt-1 leading-relaxed">{v.detail}</div>
+                      <div className="text-[10px] text-gray-500 mt-1 leading-relaxed">{v.sub}</div>
+                    </div>
+                  );
+                })()}
+                <div className="text-[10px] text-gray-500 mt-2 leading-relaxed">
+                  ※ 판정은 z-검정 근사에 따른 연구용 잣대입니다. 가설이 참이라면{' '}
+                  <span className="text-[#D4F94E]">3터치+ 확정선 돌파율</span>이 2터치선보다, 또 합성 널(~
+                  {stats.syntheticNullRate}%)보다 유의하게 높아야 합니다. 매매 신호가 아닙니다.
+                </div>
+              </div>
+            )}
+
+            {/* 결과 해석 가이드 — 경우의 수별 의미 (토글) */}
+            <div className="mb-6">
+              <button
+                onClick={() => setShowGuide((v) => !v)}
+                className="text-xs text-gray-400 hover:text-white underline underline-offset-2"
+              >
+                {showGuide ? '▾' : '▸'} 📖 결과 해석 가이드 — 각 조건이 무슨 뜻인지
+              </button>
+              {showGuide && (
+                <div className="mt-2 p-3 bg-[#1A1A1A]/40 border-2 border-[#1A1A1A] text-xs text-gray-300 leading-relaxed space-y-3">
+                  <div>
+                    <div className="font-bold text-white mb-1">유형 (선의 성격)</div>
+                    <div><span className="text-[#D4F94E]">저저고(저항)</span> — 상승하는 저점들을 이어 위로 연장. 종가로 넘으면 돌파.</div>
+                    <div><span className="text-[#C45C3E]">고고저(지지)</span> — 하락하는 고점들을 이어 아래로 연장. 종가로 깨면 이탈/돌파.</div>
+                  </div>
+                  <div>
+                    <div className="font-bold text-white mb-1">상태 (현재가와 선의 관계)</div>
+                    {(['터치임박', '접근중', '이탈', '관망', '만료'] as const).map((s) => (
+                      <div key={s} className="flex gap-2">
+                        <span className={`px-1.5 py-0.5 text-[10px] font-black shrink-0 h-fit ${STATUS_STYLE[s]}`}>{s}</span>
+                        <span className="text-gray-400">{STATUS_DESC[s]}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div className="font-bold text-white mb-1">다음터치 (완성 후 첫 재터치의 과거 결과)</div>
+                    {(['돌파', '거부', '미도달', '판정중'] as const).map((o) => (
+                      <div key={o} className="flex gap-2">
+                        <span className={`shrink-0 w-12 font-bold ${OUTCOME_STYLE[o]}`}>{o}</span>
+                        <span className="text-gray-400">{OUTCOME_DESC[o]}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div className="font-bold text-white mb-1">품질·돌파 배지</div>
+                    <div><span className="text-[#D4F94E] font-bold">강도 0–100</span> — 터치 수·밀착도·수명 종합. <span className="text-[#D4F94E]">✓</span> = 3터치 이상 확정선(신뢰도↑).</div>
+                    <div><span className="text-[#D4F94E]">📊</span> 거래량 동반 돌파(돌파봉 거래량 &gt; 추세평균×1.5) · <span className="text-amber-400">↩</span> 돌파 후 리테스트 확인(되돌림 셋업).</div>
+                  </div>
+                  <div className="text-[10px] text-gray-500 pt-1 border-t border-[#1A1A1A]">
+                    종목 행을 펼치면(▸) 그 종목의 조건 조합에 맞춘 해석 문장이 자동으로 표시됩니다.
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* 파라미터 */}
-            <div className="text-xs text-gray-500 mb-4">
+            <div className="text-xs text-gray-500 mb-4 leading-relaxed">
               파라미터(weekly canonical): 피벗확정 ±{report.params.pivotOrder}주 · 터치 ±
               {(report.params.tol * 100).toFixed(1)}% · 앵커간격 ≥{report.params.minGap}주 · 스팬 ≤
               {report.params.maxSpan}주 · 돌파 종가 {(report.params.breakTol * 100).toFixed(0)}% 초과 · 판정{' '}
-              {report.params.confirm}주 — 파라미터를 바꾸면 널 베이스라인도 다시 계산해야 합니다
+              {report.params.confirm}주
+              <br />
+              <span className="text-gray-600">
+                선 품질 게이트: 관통허용 ±{(report.params.violTol * 100).toFixed(0)}% · 최소터치 {report.params.minTouches} ·
+                |기울기| ≤{report.params.maxLogSlope}/주 · 거래량 평균 {report.params.volLookback}주×{report.params.volMult} ·
+                리테스트 {report.params.retestWindow}주 · 만료 ±{(report.params.expireGap * 100).toFixed(0)}%
+              </span>{' '}
+              — 파라미터를 바꾸면 널 베이스라인도 다시 계산해야 합니다
             </div>
 
             {/* 상태 필터 */}
@@ -303,6 +594,7 @@ export default function BitgakPage() {
                       <th className="text-left py-2 px-3 text-gray-500 font-medium">종목</th>
                       <th className="text-left py-2 px-3 text-gray-500 font-medium">유형</th>
                       <th className="text-left py-2 px-3 text-gray-500 font-medium">상태</th>
+                      <th className="text-left py-2 px-3 text-gray-500 font-medium">강도</th>
                       <th className="text-right py-2 px-3 text-gray-500 font-medium">현재가</th>
                       <th className="text-right py-2 px-3 text-gray-500 font-medium">현재선값</th>
                       <th className="text-right py-2 px-3 text-gray-500 font-medium">이격</th>
@@ -322,6 +614,7 @@ export default function BitgakPage() {
                         <Fragment key={r.ticker}>
                           <tr
                             onClick={() => setExpanded(isOpen ? null : r.ticker)}
+                            title={describeShort(a)}
                             className="border-b border-[#1A1A1A]/50 hover:bg-[#3A3A3A]/50 cursor-pointer"
                           >
                             <td className="py-2 px-3">
@@ -340,6 +633,12 @@ export default function BitgakPage() {
                             <td className="py-2 px-3">
                               <span className={`px-1.5 py-0.5 text-xs font-black ${STATUS_STYLE[a.currentStatus]}`}>
                                 {a.currentStatus}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3">
+                              <span className={`font-bold ${strengthColor(a.strength)}`}>{a.strength}</span>
+                              <span className="text-gray-600 text-xs ml-1">
+                                {a.touches}터치{a.confirmed && <span className="text-[#D4F94E]">✓</span>}
                               </span>
                             </td>
                             <td className="py-2 px-3 text-right text-white">${fmt(r.lastClose)}</td>
@@ -366,6 +665,12 @@ export default function BitgakPage() {
                             <td className={`py-2 px-3 text-xs ${OUTCOME_STYLE[a.nextTouch.outcome]}`}>
                               {a.nextTouch.outcome}
                               {a.nextTouch.date && <span className="text-gray-600 ml-1">{a.nextTouch.date}</span>}
+                              {a.nextTouch.volumeConfirmed && (
+                                <span className="ml-1 text-[10px] text-[#D4F94E]" title="거래량 동반 돌파">📊</span>
+                              )}
+                              {a.nextTouch.retest && (
+                                <span className="ml-1 text-[10px] text-amber-400" title="돌파 후 리테스트 확인">↩</span>
+                              )}
                             </td>
                             <td className="py-2 px-3">
                               <a
@@ -381,17 +686,25 @@ export default function BitgakPage() {
                           </tr>
                           {isOpen && (
                             <tr className="border-b border-[#1A1A1A]/50 bg-[#1A1A1A]/30">
-                              <td colSpan={11} className="py-3 px-3">
+                              <td colSpan={12} className="py-3 px-3">
                                 <div className="text-xs text-gray-400 mb-2">
                                   📏 로그 스케일 차트에서 앵커1({a.anchor1.date}, ${fmt(a.anchor1.price)})과
                                   앵커2({a.anchor2.date}, ${fmt(a.anchor2.price)})의 꼬리를 직선으로 이으면 이
-                                  빗각선을 재현할 수 있습니다. 전체 패턴 {r.patternCount}건 / 주봉 {r.bars}개 분석.
+                                  빗각선을 재현할 수 있습니다. 이 선은 정의구간에서 가격을 관통하지 않으며(무효화 게이트
+                                  통과), 같은 종류 피벗이 {a.touches}번 닿았습니다(평균 이격 {a.meanTouchErrorPct}%,
+                                  수명 {a.spanWeeks}주, 강도 {a.strength}/100{a.confirmed ? ' · 3터치+ 확정선' : ''}).
+                                  전체 패턴 {r.patternCount}건 / 주봉 {r.bars}개 분석.
+                                </div>
+                                {/* 조건 조합에 따른 해석 */}
+                                <div className="mb-3 p-2.5 bg-[#2A2A2A]/60 border-l-2 border-[#D4F94E] text-xs text-gray-300 leading-relaxed">
+                                  <span className="text-[#D4F94E] font-bold">🧭 해석:</span> {describePattern(a)}
                                 </div>
                                 {/* 전체 패턴 */}
                                 <table className="w-full text-xs mb-3">
                                   <thead>
                                     <tr className="text-gray-600">
                                       <th className="text-left py-1 px-2 font-medium">유형</th>
+                                      <th className="text-left py-1 px-2 font-medium">강도</th>
                                       <th className="text-left py-1 px-2 font-medium">앵커1</th>
                                       <th className="text-left py-1 px-2 font-medium">앵커2</th>
                                       <th className="text-left py-1 px-2 font-medium">완성</th>
@@ -403,6 +716,12 @@ export default function BitgakPage() {
                                     {r.patterns.map((pt, i) => (
                                       <tr key={i} className="border-t border-[#1A1A1A]/40 text-gray-400">
                                         <td className="py-1 px-2">{pt.type}</td>
+                                        <td className="py-1 px-2">
+                                          <span className={strengthColor(pt.strength)}>{pt.strength}</span>
+                                          <span className="text-gray-600 ml-1">
+                                            {pt.touches}T{pt.confirmed && '✓'}
+                                          </span>
+                                        </td>
                                         <td className="py-1 px-2">
                                           {pt.anchor1.date} <span className="text-gray-600">${fmt(pt.anchor1.price)}</span>
                                         </td>
@@ -418,6 +737,8 @@ export default function BitgakPage() {
                                               {pt.nextTouch.date} @ ${pt.nextTouch.lineValue !== null ? fmt(pt.nextTouch.lineValue) : ''}
                                             </span>
                                           )}
+                                          {pt.nextTouch.volumeConfirmed && <span className="ml-1 text-[#D4F94E]" title="거래량 동반">📊</span>}
+                                          {pt.nextTouch.retest && <span className="ml-1 text-amber-400" title="리테스트 확인">↩</span>}
                                         </td>
                                       </tr>
                                     ))}

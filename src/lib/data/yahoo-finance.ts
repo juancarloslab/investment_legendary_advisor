@@ -181,6 +181,7 @@ interface YFChartQuote {
   high?: number | null;
   low?: number | null;
   close?: number | null;
+  volume?: number | null;
 }
 
 /**
@@ -218,6 +219,7 @@ export async function fetchWeeklyBars(ticker: string, years: number = 10): Promi
       high: q.high as number,
       low: q.low as number,
       close: q.close as number,
+      volume: Number.isFinite(q.volume) ? (q.volume as number) : undefined,
     }];
   });
 
