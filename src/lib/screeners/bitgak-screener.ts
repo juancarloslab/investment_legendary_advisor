@@ -141,8 +141,11 @@ export async function runBitgakScreening(forceRefresh = false): Promise<BitgakRe
     if (i + BATCH_SIZE < tickers.length) await delay(BATCH_DELAY_MS);
   }
 
-  // 관련도 정렬: 현재 상태 우선 → 선 강도 높은 순 → 현재가-선 간격 작은 순
+  // 관련도 정렬: 활성 타점(빗각 밟는 중) 최우선 → 현재 상태 → 선 강도 → 현재가-선 간격
   results.sort((a, b) => {
+    const ea = a.active?.entry.status === '활성' ? 0 : 1;
+    const eb = b.active?.entry.status === '활성' ? 0 : 1;
+    if (ea !== eb) return ea - eb;
     const ra = STATUS_RANK[a.active?.currentStatus ?? '관망'] ?? 3;
     const rb = STATUS_RANK[b.active?.currentStatus ?? '관망'] ?? 3;
     if (ra !== rb) return ra - rb;

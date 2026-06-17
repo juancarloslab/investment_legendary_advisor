@@ -35,6 +35,14 @@ interface BitgakPattern {
   strength: number;
   currentGapPct: number;
   currentStatus: '터치임박' | '접근중' | '관망' | '이탈' | '만료';
+  entry: {
+    status: '활성' | '과거' | '없음';
+    direction: '롱' | '숏';
+    date: string | null;
+    lineValue: number | null;
+    refPrice: number | null;
+    count: number;
+  };
 }
 
 interface BitgakScreenResult {
@@ -114,6 +122,21 @@ const OUTCOME_STYLE: Record<string, string> = {
   판정중: 'text-amber-400',
 };
 
+type EntrySetup = BitgakPattern['entry'];
+
+/** 빗각 밟기 타점 한 줄 표현 (테이블/배지용) */
+function entryLabel(e: EntrySetup): string {
+  if (e.status === '없음') return '—';
+  const arrow = e.direction === '롱' ? '▲롱' : '▼숏';
+  if (e.status === '활성') return `🎯 ${arrow} 밟는중`;
+  return `${arrow} 과거 ${e.count}회`;
+}
+function entryClass(e: EntrySetup): string {
+  if (e.status === '활성') return e.direction === '롱' ? 'text-[#D4F94E] font-bold' : 'text-[#C45C3E] font-bold';
+  if (e.status === '과거') return 'text-gray-400';
+  return 'text-gray-600';
+}
+
 function strengthColor(strength: number): string {
   if (strength >= 70) return 'text-[#D4F94E]';
   if (strength >= 50) return 'text-amber-400';
@@ -183,9 +206,19 @@ function describePattern(p: BitgakPattern): string {
     past = '재터치는 있었으나 판정 윈도우가 데이터 끝에 걸려 돌파/거부가 아직 확정되지 않았습니다(판정중).';
   }
 
+  let entryClause = '';
+  if (p.entry.status === '활성') {
+    const hold = p.entry.direction === '롱' ? '지지' : '저항';
+    const trig = p.entry.direction === '롱' ? '선 위에서 종가가 지지되며 반등하면' : '선 아래에서 종가가 저항받고 되밀리면';
+    entryClause = `🎯 지금 이 빗각을 밟는 중입니다(${p.entry.direction} 후보) — 돌파 후 선($${p.entry.lineValue}) 부근으로 되돌아와 ${hold}받는지 보는 "빗각 밟기" 타점 구간입니다. ${trig} 진입 후보지만, 확정·검증 전엔 신뢰하지 마세요.`;
+  } else if (p.entry.status === '과거') {
+    const hold = p.entry.direction === '롱' ? '지지' : '저항';
+    entryClause = `과거 돌파 후 이 선을 ${p.entry.count}회 밟고 ${hold}받은 되돌림 타점이 있었습니다(가장 최근 ${p.entry.date} · 선값 $${p.entry.lineValue}).`;
+  }
+
   const caveat = '⚠️ 단일 종목의 다음-터치 결과는 통계적으로 노이즈(5–48%)와 구분되지 않습니다. 신호가 아니라 "선이 어디 있는지"의 지도로만 보세요.';
 
-  return [lineNature, quality, here, past, caveat].join(' ');
+  return [lineNature, quality, here, past, entryClause, caveat].filter(Boolean).join(' ');
 }
 
 // ─── 전체(풀링) 결과 자동 판정 — 경우의 수별 설명 ──────
@@ -295,6 +328,7 @@ export default function BitgakPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('전체');
+  const [entryOnly, setEntryOnly] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
 
@@ -323,9 +357,15 @@ export default function BitgakPage() {
 
   const filtered = report
     ? report.results.filter(
-        (r) => statusFilter === '전체' || r.active?.currentStatus === statusFilter,
+        (r) =>
+          (statusFilter === '전체' || r.active?.currentStatus === statusFilter) &&
+          (!entryOnly || r.active?.entry.status === '활성'),
       )
     : [];
+
+  const activeEntryCount = report
+    ? report.results.filter((r) => r.active?.entry.status === '활성').length
+    : 0;
 
   const stats = report?.pooledStats;
 
@@ -565,6 +605,20 @@ export default function BitgakPage() {
               — 파라미터를 바꾸면 널 베이스라인도 다시 계산해야 합니다
             </div>
 
+            {/* 빗각 밟기 타점 필터 */}
+            <div className="mb-3">
+              <button
+                onClick={() => setEntryOnly((v) => !v)}
+                className={`px-3 py-2 rounded-none border-2 border-[#1A1A1A] text-sm font-black whitespace-nowrap transition-all shadow-[4px_4px_0px_0px_#1A1A1A] hover:translate-x-[-2px] hover:translate-y-[-2px] hover:shadow-[6px_6px_0px_0px_#1A1A1A] active:translate-x-[0px] active:translate-y-[0px] active:shadow-[2px_2px_0px_0px_#1A1A1A] ${
+                  entryOnly ? 'bg-[#D4F94E] text-[#1A1A1A]' : 'bg-[#3A3A3A] text-white hover:bg-[#2A2A2A]'
+                }`}
+                title="돌파 후 빗각으로 되돌아와 지지/저항을 시험 중인 '빗각 밟기' 진입 타점"
+              >
+                🎯 활성 타점만 ({activeEntryCount})
+              </button>
+              <span className="ml-2 text-[10px] text-gray-500">돌파 후 빗각을 다시 밟고 지지/저항을 시험 중인 종목 — 매매신호 아님(관찰용)</span>
+            </div>
+
             {/* 상태 필터 */}
             <div className="flex gap-1 mb-4 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
               {STATUS_FILTERS.map((f) => {
@@ -605,6 +659,7 @@ export default function BitgakPage() {
                       <th className="text-left py-2 px-3 text-gray-500 font-medium hidden lg:table-cell">앵커2</th>
                       <th className="text-left py-2 px-3 text-gray-500 font-medium hidden md:table-cell">완성</th>
                       <th className="text-left py-2 px-3 text-gray-500 font-medium">다음터치</th>
+                      <th className="text-left py-2 px-3 text-gray-500 font-medium">🎯 타점</th>
                       <th className="text-left py-2 px-3 text-gray-500 font-medium">차트</th>
                     </tr>
                   </thead>
@@ -675,6 +730,9 @@ export default function BitgakPage() {
                                 <span className="ml-1 text-[10px] text-amber-400" title="돌파 후 리테스트 확인">↩</span>
                               )}
                             </td>
+                            <td className={`py-2 px-3 text-xs whitespace-nowrap ${entryClass(a.entry)}`} title={a.entry.lineValue ? `선값 $${fmt(a.entry.lineValue)} 부근` : ''}>
+                              {entryLabel(a.entry)}
+                            </td>
                             <td className="py-2 px-3">
                               <a
                                 href={tvLink(r.ticker)}
@@ -689,7 +747,7 @@ export default function BitgakPage() {
                           </tr>
                           {isOpen && (
                             <tr className="border-b border-[#1A1A1A]/50 bg-[#1A1A1A]/30">
-                              <td colSpan={12} className="py-3 px-3">
+                              <td colSpan={13} className="py-3 px-3">
                                 <div className="text-xs text-gray-400 mb-2">
                                   📏 로그 스케일 차트에서 앵커1({a.anchor1.date}, ${fmt(a.anchor1.price)})과
                                   앵커2({a.anchor2.date}, ${fmt(a.anchor2.price)})의 꼬리를 직선으로 이으면 이

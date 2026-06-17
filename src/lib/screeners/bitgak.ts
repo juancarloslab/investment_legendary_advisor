@@ -76,6 +76,27 @@ export type PatternType = '저저고' | '고고저';
 export type LineRole = 'resistance' | 'support';
 export type TouchOutcome = '돌파' | '거부' | '미도달' | '판정중';
 export type CurrentStatus = '터치임박' | '접근중' | '관망' | '이탈' | '만료';
+export type EntryStatus = '활성' | '과거' | '없음';
+
+/**
+ * 빗각 밟기 타점 (돌파 후 되돌림 지지/저항을 이용한 진입 지점).
+ * 인범 기법의 핵심 실전 타점: 돌파 후 주가가 다시 선으로 내려와(저저고) 밟고 지지받으며
+ * 반등하면 롱, 올라와(고고저) 저항받고 되밀리면 숏.
+ */
+export interface EntrySetup {
+  /** 활성=현재 밟는 중(관찰 액션) · 과거=확정된 되돌림 타점 있음 · 없음 */
+  status: EntryStatus;
+  /** 저저고(저항 돌파)→롱, 고고저(지지 이탈)→숏 */
+  direction: '롱' | '숏';
+  /** 가장 최근 타점 봉 날짜 */
+  date: string | null;
+  /** 그 시점 선값(진입 기준선) */
+  lineValue: number | null;
+  /** 진입 참고가(그 봉 종가) */
+  refPrice: number | null;
+  /** 돌파 후 빗각 밟기(되돌림 지지/저항 확인) 횟수 */
+  count: number;
+}
 
 export interface BitgakPattern {
   type: PatternType;
@@ -117,6 +138,8 @@ export interface BitgakPattern {
   /** 현재가 대비 선 위치(%) 와 상태 */
   currentGapPct: number;
   currentStatus: CurrentStatus;
+  /** 빗각 밟기 타점 (돌파 후 되돌림 지지/저항 진입 지점) */
+  entry: EntrySetup;
 }
 
 export interface BitgakResult {
@@ -355,6 +378,72 @@ function classifyStatus(gapPct: number, role: LineRole, p: BitgakParams): Curren
   return '관망';
 }
 
+// ─── 빗각 밟기 타점 (돌파 후 되돌림 진입) ────────────────────
+
+/**
+ * 완성 이후를 훑어 "돌파 → 되돌림 밟기 → 지지/저항 확인" 진입 타점을 찾는다.
+ *  저저고(저항): 종가가 선 위로 돌파 → 이후 저가가 선까지(±tol) 되돌아와 밟고 종가가 선 위에서 지지 = 롱 타점.
+ *  고고저(지지): 종가가 선 아래로 이탈 → 이후 고가가 선까지 되돌아와 종가가 선 아래에서 저항 = 숏 타점.
+ *  지지/저항이 깨지면(반대 종가) 셋업 무효 → 재돌파 필요. 마지막 봉이 밟는 중이면 status='활성'.
+ */
+export function detectEntries(
+  bars: WeeklyBar[],
+  slope: number,
+  intercept: number,
+  role: LineRole,
+  fromIndex: number,
+  p: BitgakParams,
+): EntrySetup {
+  const direction: EntrySetup['direction'] = role === 'resistance' ? '롱' : '숏';
+  const lastIdx = bars.length - 1;
+  const entries: number[] = []; // 확정된 밟기-지지/저항 봉 인덱스
+  let broken = false;
+
+  for (let i = fromIndex + 1; i < bars.length; i++) {
+    const line = lineValueAt(slope, intercept, i);
+    if (role === 'resistance') {
+      if (!broken) {
+        if (bars[i].close > line * (1 + p.breakTol)) broken = true;
+        continue;
+      }
+      const stepped = bars[i].low <= line * (1 + p.tol); // 선까지 되돌아와 밟음
+      const held = bars[i].close >= line * (1 - p.breakTol); // 종가가 선 위에서 지지
+      if (stepped && held) entries.push(i);
+      else if (bars[i].close < line * (1 - p.breakTol)) broken = false; // 지지 실패 → 무효
+    } else {
+      if (!broken) {
+        if (bars[i].close < line * (1 - p.breakTol)) broken = true;
+        continue;
+      }
+      const stepped = bars[i].high >= line * (1 - p.tol);
+      const held = bars[i].close <= line * (1 + p.breakTol);
+      if (stepped && held) entries.push(i);
+      else if (bars[i].close > line * (1 + p.breakTol)) broken = false;
+    }
+  }
+
+  // 현재(마지막 봉)가 밟는 중인지 — 아직 종가 확정 전이어도 '활성'으로 관찰 대상
+  const lineNow = lineValueAt(slope, intercept, lastIdx);
+  const steppingNow = broken && (role === 'resistance'
+    ? bars[lastIdx].low <= lineNow * (1 + p.tol)
+    : bars[lastIdx].high >= lineNow * (1 - p.tol));
+
+  if (entries.length === 0 && !steppingNow) {
+    return { status: '없음', direction, date: null, lineValue: null, refPrice: null, count: 0 };
+  }
+  const lastEntry = entries.length ? entries[entries.length - 1] : -1;
+  const live = steppingNow || lastEntry === lastIdx;
+  const refIdx = live ? lastIdx : lastEntry;
+  return {
+    status: live ? '활성' : '과거',
+    direction,
+    date: bars[refIdx].date,
+    lineValue: round2(lineValueAt(slope, intercept, refIdx)),
+    refPrice: round2(bars[refIdx].close),
+    count: entries.length,
+  };
+}
+
 // ─── 패턴 빌더 ──────────────────────────────────────────────
 
 function buildPattern(
@@ -407,6 +496,7 @@ function buildPattern(
     strength,
     currentGapPct: round2(currentGapPct),
     currentStatus: classifyStatus(currentGapPct, role, p),
+    entry: detectEntries(bars, slope, intercept, role, c, p),
   };
 }
 
